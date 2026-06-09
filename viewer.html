@@ -43,11 +43,7 @@
     padding: 2rem;
   }
 
-  #content {
-    display: none;
-    width: 100%;
-    min-height: 100vh;
-  }
+  #content { display: none; width: 100%; }
 
   iframe {
     width: 100%;
@@ -77,15 +73,23 @@
 <script>
 (async () => {
   const params = new URLSearchParams(window.location.search);
-  const url = params.get('url');
+  const encoded = params.get('r');
 
-  if (!url) {
-    showError('URL 파라미터가 없습니다.');
+  if (!encoded) {
+    showError('잘못된 링크입니다.');
+    return;
+  }
+
+  let fileUrl;
+  try {
+    fileUrl = atob(encoded);
+  } catch(e) {
+    showError('링크가 손상됐습니다.');
     return;
   }
 
   try {
-    const res = await fetch(url);
+    const res = await fetch(fileUrl);
     if (!res.ok) throw new Error('HTTP ' + res.status);
 
     const html = await res.text();
@@ -94,7 +98,6 @@
 
     const frame = document.getElementById('report-frame');
     frame.src = blobUrl;
-
     frame.onload = () => {
       document.getElementById('loading').style.display = 'none';
       document.getElementById('content').style.display = 'block';
