@@ -71,20 +71,43 @@
 </div>
 
 <script>
+// 리포트 주소는 ?c=<8자 코드>로 받는다. 코드는 upload_requests.short_code 이고,
+// get_report_by_code RPC가 report_path 만 돌려준다(이름·전화번호 등은 나오지 않는다).
+// anon 키는 mmmh.kr 전 페이지에 이미 공개된 값이라 여기 두어도 새로 열리는 권한은 없다.
+const SUPABASE_URL = 'https://zzczkrnninvyyxwdicck.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp6Y3prcm5uaW52eXl4d2RpY2NrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIwNzQxMTEsImV4cCI6MjA4NzY1MDExMX0.mgzgnSoSGIOKi2tJe-C_BNfdroH7rZs6fsm8c4KV0Pg';
+
 (async () => {
   const params = new URLSearchParams(window.location.search);
-  const encoded = params.get('r');
+  const code = params.get('c');
 
-  if (!encoded) {
+  if (!code) {
     showError('잘못된 링크입니다.');
     return;
   }
 
   let fileUrl;
   try {
-    fileUrl = atob(encoded);
+    const lookup = await fetch(SUPABASE_URL + '/rest/v1/rpc/get_report_by_code', {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: 'Bearer ' + SUPABASE_ANON_KEY,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ p_code: code }),
+    });
+    if (!lookup.ok) throw new Error('HTTP ' + lookup.status);
+
+    // 코드가 없거나 아직 보고서가 올라가지 않은 건이면 null
+    const reportPath = await lookup.json();
+    if (!reportPath) {
+      showError('리포트를 찾을 수 없습니다. 링크를 다시 확인해 주세요.');
+      return;
+    }
+    fileUrl = SUPABASE_URL + '/storage/v1/object/public/reports/' + reportPath;
   } catch(e) {
-    showError('링크가 손상됐습니다.');
+    showError('링크를 확인하지 못했습니다.');
     return;
   }
 
