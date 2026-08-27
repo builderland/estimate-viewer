@@ -63,7 +63,6 @@
 <div id="error">
   <span style="font-size:32px;">⚠</span>
   <span id="error-msg">보고서를 불러올 수 없습니다.</span>
-  <span id="error-sub" style="color:#999;font-size:12px;">URL이 만료됐거나 잘못된 링크입니다.</span>
 </div>
 
 <div id="content">
@@ -77,18 +76,12 @@
 const SUPABASE_URL = 'https://zzczkrnninvyyxwdicck.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp6Y3prcm5uaW52eXl4d2RpY2NrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIwNzQxMTEsImV4cCI6MjA4NzY1MDExMX0.mgzgnSoSGIOKi2tJe-C_BNfdroH7rZs6fsm8c4KV0Pg';
 
-// 변경: 보조 문구도 상황에 맞춘다.
-//  이전엔 "URL이 만료됐거나 잘못된 링크입니다."가 고정이라, 링크는 멀쩡한데 표시에만
-//  실패한 경우(타임아웃·네트워크)에도 고객에게 링크가 잘못됐다고 잘못 안내했다.
-const SUB_BAD_LINK = 'URL이 만료됐거나 잘못된 링크입니다.';
-const SUB_RETRY = '잠시 후 다시 시도해 주세요.';
-
 (async () => {
   const params = new URLSearchParams(window.location.search);
   const code = params.get('c');
 
   if (!code) {
-    showError('잘못된 링크입니다.');
+    showError('잘못된 링크입니다. 채널로 문의해 주세요.');
     return;
   }
 
@@ -108,24 +101,34 @@ const SUB_RETRY = '잠시 후 다시 시도해 주세요.';
     // 코드가 없거나 아직 보고서가 올라가지 않은 건이면 null
     const reportPath = await lookup.json();
     if (!reportPath) {
-      showError('리포트를 찾을 수 없습니다. 링크를 다시 확인해 주세요.');
+      showError('아직 보고서가 작성되지 않았습니다. 채널로 문의해 주세요.');
       return;
     }
     fileUrl = SUPABASE_URL + '/storage/v1/object/public/reports/' + reportPath;
   } catch(e) {
-    showError('링크를 확인하지 못했습니다.', SUB_RETRY);
+    showError('일시적인 오류입니다. 잠시 후 다시 시도해 주세요.');
     return;
   }
 
   let html;
   try {
     const res = await fetch(fileUrl);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (!res.ok) {
+      // 파일이 없으면 재시도해도 같다. 그 외(5xx 등)는 일시적일 수 있어 안내가 다르다.
+      //  주의: Supabase Storage 는 없는 객체에 404 가 아니라 HTTP 400 + 본문
+      //  {"statusCode":"404","error":"not_found","code":"NoSuchKey"} 를 준다.
+      const body = await res.text().catch(() => '');
+      const missing = res.status === 404 || /"statusCode"\s*:\s*"404"|not_found|NoSuchKey/.test(body);
+      console.error('report fetch failed', res.status, body.slice(0, 200));
+      showError(missing
+        ? '보고서를 찾을 수 없습니다. 채널로 문의해 주세요. (E1)'
+        : '일시적인 오류입니다. 잠시 후 다시 시도해 주세요. (E1)');
+      return;
+    }
     html = await res.text();
   } catch(e) {
-    // 'HTTP 404' 같은 원문을 고객 화면에 그대로 띄우지 않는다(진단은 콘솔로).
     console.error('report fetch failed', e);
-    showError('보고서를 불러오지 못했습니다. 채널로 문의해 주세요. (E1)', SUB_RETRY);
+    showError('일시적인 오류입니다. 잠시 후 다시 시도해 주세요. (E1)');
     return;
   }
 
@@ -172,11 +175,11 @@ const SUB_RETRY = '잠시 후 다시 시도해 주세요.';
   t3 = setTimeout(() => {
     if (shown) return;
     try {
+      document.open(); document.write(html); document.close();
+      // 성공한 뒤에 표시 처리 — 실패하면 t4(안내 문구)가 그대로 살아 있어야 한다.
       shown = true;
       clearTimeout(t4);
-      document.open(); document.write(html); document.close();
     } catch(e) {
-      shown = false;
       console.error('top-level render failed', e);
     }
   }, 5000);
@@ -184,14 +187,14 @@ const SUB_RETRY = '잠시 후 다시 시도해 주세요.';
   // 그래도 못 그리면 무한 로딩 대신 안내.
   t4 = setTimeout(() => {
     if (shown) return;
-    showError('보고서를 표시하지 못했습니다. 채널로 문의해 주세요. (E2)', SUB_RETRY);
+    showError('보고서를 표시하지 못했습니다. 다른 브라우저에서 열거나 채널로 문의해 주세요. (E2)');
   }, 8000);
 })();
 
-function showError(msg, sub = SUB_BAD_LINK) {
+// 문구는 케이스마다 한 줄로 끝낸다 — 재시도 안내는 실제로 재시도가 통하는 경우에만 넣는다.
+function showError(msg) {
   document.getElementById('loading').style.display = 'none';
   document.getElementById('error-msg').textContent = msg;
-  document.getElementById('error-sub').textContent = sub;
   document.getElementById('error').style.display = 'flex';
 }
 </script>
