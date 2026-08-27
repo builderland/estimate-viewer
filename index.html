@@ -117,33 +117,75 @@ const SUB_RETRY = '잠시 후 다시 시도해 주세요.';
     return;
   }
 
+  let html;
   try {
     const res = await fetch(fileUrl);
     if (!res.ok) throw new Error('HTTP ' + res.status);
-
-    const html = await res.text();
-
-    // 변경: blob: URL 대신 srcdoc.
-    //  샌드박스 iframe에 blob:을 넣으면 iOS Safari·카카오톡 등 인앱 브라우저가 로드를 막는다.
-    //  그러면 onload가 오지 않고, 로딩 화면을 지우는 코드가 거기에만 있어 "불러오는 중"에서 멈췄다.
-    const frame = document.getElementById('report-frame');
-
-    // 변경: onload가 끝내 오지 않아도 무한 로딩으로 남지 않도록 안전장치.
-    const failsafe = setTimeout(() => {
-      showError('보고서를 표시하지 못했습니다. 채널로 문의해 주세요.', SUB_RETRY);
-    }, 8000);
-
-    frame.onload = () => {
-      clearTimeout(failsafe);
-      document.getElementById('loading').style.display = 'none';
-      document.getElementById('content').style.display = 'block';
-    };
-    frame.srcdoc = html;
+    html = await res.text();
   } catch(e) {
-    // 변경: 'HTTP 404' 같은 원문을 고객 화면에 그대로 띄우지 않는다(진단은 콘솔로).
-    console.error('report load failed', e);
-    showError('보고서를 표시하지 못했습니다. 채널로 문의해 주세요.', SUB_RETRY);
+    // 'HTTP 404' 같은 원문을 고객 화면에 그대로 띄우지 않는다(진단은 콘솔로).
+    console.error('report fetch failed', e);
+    showError('보고서를 불러오지 못했습니다. 채널로 문의해 주세요. (E1)', SUB_RETRY);
+    return;
   }
+
+  // 변경: 렌더를 3단계로 시도한다.
+  //  인앱 브라우저가 샌드박스 iframe의 "특정 로딩 방식"을 막는 사례를 두 번 겪었다 —
+  //  iOS Safari는 blob:, 카카오 비즈니스 파트너센터 웹뷰는 srcdoc.
+  //  그때마다 onload가 오지 않아 로딩 화면에서 멈췄으므로, 한 방식에 기대지 않는다.
+  const frame = document.getElementById('report-frame');
+  let shown = false;
+  let t2 = null;
+  let t3 = null;
+  let t4 = null;
+
+  function reveal() {
+    if (shown) return;
+    shown = true;
+    clearTimeout(t2); clearTimeout(t3); clearTimeout(t4);
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('content').style.display = 'block';
+  }
+
+  frame.onload = reveal;
+
+  // 1단계 — srcdoc. 대부분의 브라우저는 여기서 끝난다.
+  frame.srcdoc = html;
+
+  // 2단계 — iframe 문서에 직접 쓴다. 로딩 스킴(blob:/srcdoc)을 아예 타지 않으면서
+  //  샌드박스 격리는 그대로 유지된다.
+  t2 = setTimeout(() => {
+    if (shown) return;
+    try {
+      frame.removeAttribute('srcdoc');
+      const doc = frame.contentDocument;
+      if (!doc) throw new Error('contentDocument unavailable');
+      doc.open(); doc.write(html); doc.close();
+      reveal();
+    } catch(e) {
+      console.error('iframe write failed', e);
+    }
+  }, 2500);
+
+  // 3단계 — iframe 자체가 막힌 브라우저용. 격리를 포기하고 현재 문서에 그린다.
+  //  보고서 HTML은 외부 입력이 아니라 우리가 만들거나 운영자가 올린 문서다.
+  t3 = setTimeout(() => {
+    if (shown) return;
+    try {
+      shown = true;
+      clearTimeout(t4);
+      document.open(); document.write(html); document.close();
+    } catch(e) {
+      shown = false;
+      console.error('top-level render failed', e);
+    }
+  }, 5000);
+
+  // 그래도 못 그리면 무한 로딩 대신 안내.
+  t4 = setTimeout(() => {
+    if (shown) return;
+    showError('보고서를 표시하지 못했습니다. 채널로 문의해 주세요. (E2)', SUB_RETRY);
+  }, 8000);
 })();
 
 function showError(msg, sub = SUB_BAD_LINK) {
